@@ -550,12 +550,12 @@ def check_and_send_email():
 
                 admin_name = 'Admin'
                 message_text = (f"Задание {task_number} от {user_name}, отправленное {formatted_done_at} (по МСК), "
-                                f"было проверено и готово к экспертной оценке. "
+                                f"было автоматически проверено и готово к экспертной оценке. "
                                 f"В личном кабинете Вы также может ознакомиться с отчетом анализа решения и кодом кандидата для проставления экспертного заключения.")
 
                 message_text_to_user = (
                     f"Задание {task_number}, отправленное {formatted_done_at} (по МСК), "
-                    f"было проверено и готово к экспертной оценке. "
+                    f"было автоматически проверено и готово к экспертной оценке. "
                     f"Пока эксперт не оставил обратной связи, Вы можете ознакомиться с отчетом анализа решения.")
 
                 send_email(user_email, "Задание готово к проверке", message_text_to_user, user_name)
@@ -728,6 +728,63 @@ def check_and_send_email():
             #                     )
             #     except Exception as e:
             #         print(f"Exception occurred while processing documentssss: {str(e)}")
+
+            # Scenario 6: new, modifiedm deleted in Tasks
+            all_tasks = tasks_collection.find({
+                "$or": [
+                    {"new_email": {"$ne": "sent"}},
+                    {"modified_email": {"$ne": "sent"}},
+                    {"deleted_email": {"$ne": "sent"}}
+                ]
+            })
+            for document in all_tasks:
+                task_id = document['_id']
+                task_number = document.get('taskNumber', 'Unknown')
+                task_text = document.get('taskText', 'No Text')
+                task_status = document.get('status', 'unknown')
+
+                if task_status == 'new':
+                    status = 'Создано'
+                    message = f"- {status}: [{task_number}][{task_text}]"
+                    update_field = 'new_email'
+                elif task_status == 'modified':
+                    status = 'Изменено'
+                    message = f"- {status}: [{task_number}] -> [{task_text}]"
+                    update_field = 'modified_email'
+                elif task_status == 'deleted':
+                    status = 'Удалено'
+                    message = f"- {status}: [{task_number}][{task_text}]"
+                    update_field = 'deleted_email'
+                else:
+                    continue  # Игнорируем другие статусы
+
+                if document.get(update_field) == "sent":
+                    continue
+                # Получение списка админов и отправка уведомлений
+                admin_emails = admins_collection.distinct("email")
+                for admin_email in admin_emails:
+                    admin_name = 'Admin'
+                    email_subject = 'База данных тестовых заданий была изменена'
+                    email_body = (
+                        f"База данных тестовых заданий была изменена:\n"
+                        f"{message}\n"
+                    )
+                    if send_email(admin_email, email_subject, email_body, admin_name):
+                        # Обновляем флаги для предотвращения повторных отправок
+                        update_field = None
+                        if status == 'Создано':
+                            update_field = 'new_email'
+                        elif status == 'Изменено':
+                            update_field = 'modified_email'
+                        elif status == 'Удалено':
+                            update_field = 'deleted_email'
+
+                        if update_field:
+                            tasks_collection.update_one(
+                                {"_id": task_id},
+                                {"$set": {update_field: "sent"}}
+                            )
+                            print(f"{status} уведомление отправлено (админу)")
         except Exception as e:
             print(f"Exception occurred while processing documents: {str(e)}")
 
